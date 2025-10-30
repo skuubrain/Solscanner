@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Wallet Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Solana Wallet Tracker</h1>
+            <p class="subtitle">Track top traders buying 2+ SPL tokens</p>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <input type="text" id="walletInput" placeholder="Enter wallet address to track">
+                <button onclick="trackWallet()" class="btn btn-primary">Track Wallet</button>
+            </div>
+            <button onclick="scanWallets()" class="btn btn-secondary">Scan Trending Wallets</button>
+            <button onclick="loadWallets()" class="btn btn-refresh">Refresh Data</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number" id="walletCount">0</div>
+                <div class="stat-label">Tracked Wallets</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="tokenCount">0</div>
+                <div class="stat-label">Flagged Tokens</div>
+            </div>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="wallets-section">
+            <h2>Tracked Wallets</h2>
+            <div id="walletsContainer">
+                <p class="empty-state">No wallets tracked yet. Add a wallet or scan trending wallets to get started.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let walletsData = [];
+
+        async function loadWallets() {
+            try {
+                const response = await fetch('/api/wallets');
+                const data = await response.json();
+                walletsData = data.wallets;
+                updateUI();
+                await loadFlaggedTokens();
+                showMessage('Data refreshed successfully', 'success');
+            } catch (error) {
+                console.error('Error loading wallets:', error);
+                showMessage('Error loading wallets: ' + error.message, 'error');
+            }
+        }
+
+        async function loadFlaggedTokens() {
+            try {
+                const response = await fetch('/api/tokens/flagged');
+                const data = await response.json();
+                document.getElementById('tokenCount').textContent = data.count;
+            } catch (error) {
+                console.error('Error loading flagged tokens:', error);
+            }
+        }
+
+        async function trackWallet() {
+            const walletAddress = document.getElementById('walletInput').value.trim();
+            
+            if (!walletAddress) {
+                showMessage('Please enter a wallet address', 'error');
+                return;
+            }
+
+            showMessage('Tracking wallet...', 'info');
+
+            try {
+                const response = await fetch('/api/track', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ wallet_address: walletAddress }),
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.meets_criteria) {
+                        showMessage(`Wallet tracked! Found ${data.token_count} tokens`, 'success');
+                        await loadWallets();
+                    } else {
+                        showMessage(`Wallet has only ${data.token_count} token(s). Needs 2+ to track.`, 'warning');
+                    }
+                    document.getElementById('walletInput').value = '';
+                } else {
+                    showMessage('Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                console.error('Error tracking wallet:', error);
+                showMessage('Error tracking wallet: ' + error.message, 'error');
+            }
+        }
+
+        async function scanWallets() {
+            showMessage('Scanning trending wallets... This may take a moment.', 'info');
+
+            try {
+                const response = await fetch('/api/scan', {
+                    method: 'POST',
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showMessage(`Scan complete! Found ${data.count} qualifying wallets`, 'success');
+                    await loadWallets();
+                } else {
+                    showMessage('Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                console.error('Error scanning wallets:', error);
+                showMessage('Error scanning wallets: ' + error.message, 'error');
+            }
+        }
+
+        function updateUI() {
+            const container = document.getElementById('walletsContainer');
+            document.getElementById('walletCount').textContent = walletsData.length;
+
+            if (walletsData.length === 0) {
+                container.innerHTML = '<p class="empty-state">No wallets tracked yet. Add a wallet or scan trending wallets to get started.</p>';
+                return;
+            }
+
+            container.innerHTML = walletsData.map(wallet => `
+                <div class="wallet-card">
+                    <div class="wallet-header">
+                        <div class="wallet-address">
+                            <strong>Wallet:</strong> ${truncateAddress(wallet.wallet)}
+                            <button onclick="copyToClipboard('${wallet.wallet}')" class="copy-btn">📋</button>
+                        </div>
+                        <div class="status-badge ${wallet.position_status || 'holding'}">
+                            ${formatStatus(wallet.position_status || 'holding')}
+                        </div>
+                    </div>
+                    <div class="wallet-info">
+                        <div><strong>Token Count:</strong> ${wallet.token_count}</div>
+                        <div><strong>Status:</strong> ${wallet.status}</div>
+                        <div><strong>Last Updated:</strong> ${formatDate(wallet.last_updated)}</div>
+                    </div>
+                    <div class="tokens-list">
+                        <strong>Tokens:</strong>
+                        ${wallet.tokens.map(token => `
+                            <div class="token-item">
+                                <span class="token-symbol">${token.symbol}</span>
+                                <span class="token-amount">${formatAmount(token.amount)}</span>
+                                <span class="token-mint" title="${token.mint}">${truncateAddress(token.mint)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function truncateAddress(address) {
+            if (!address) return 'N/A';
+            return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+        }
+
+        function formatStatus(status) {
+            const statusMap = {
+                'holding': '✅ Holding',
+                'sold_partially': '⚠️ Sold Partially',
+                'sold_all': '❌ Sold All'
+            };
+            return statusMap[status] || status;
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleString();
+        }
+
+        function formatAmount(amount) {
+            if (amount === undefined || amount === null) return '0';
+            return parseFloat(amount).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 6
+            });
+        }
+
+        function showMessage(text, type) {
+            const messageEl = document.getElementById('message');
+            messageEl.textContent = text;
+            messageEl.className = `message ${type}`;
+            messageEl.style.display = 'block';
+            
+            setTimeout(() => {
+                messageEl.style.display = 'none';
+            }, 5000);
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showMessage('Address copied to clipboard!', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+            });
+        }
+
+        document.getElementById('walletInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                trackWallet();
+            }
+        });
+
+        loadWallets();
+        setInterval(loadWallets, 30000);
+    </script>
+</body>
+</html>
