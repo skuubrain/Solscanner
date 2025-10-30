@@ -15,16 +15,16 @@ def init_scheduler():
         scheduler = BackgroundScheduler()
         scheduler.start()
         atexit.register(lambda: scheduler.shutdown())
-        
+
         def scheduled_scan():
             with app.app_context():
-                print("Running scheduled wallet scan...")
+                print("Running scheduled top trader scan...")
                 try:
-                    tracker.scan_trending_wallets()
-                    print(f"Scan complete. Tracking {len(tracker.get_tracked_wallets())} wallets.")
+                    flagged = tracker.scan_top_traders(num_traders=50)
+                    print(f"Scan complete. Found {len(flagged)} flagged tokens.")
                 except Exception as e:
                     print(f"Error during scheduled scan: {e}")
-        
+
         scheduler.add_job(func=scheduled_scan, trigger="interval", minutes=15)
         print("Scheduler initialized and started.")
 
@@ -42,27 +42,16 @@ def get_wallets():
         'count': len(wallets)
     })
 
-@app.route('/api/track', methods=['POST'])
-def track_wallet():
-    data = request.get_json()
-    wallet_address = data.get('wallet_address')
-    
-    if not wallet_address:
-        return jsonify({'error': 'Wallet address is required'}), 400
-    
-    try:
-        wallet_data = tracker.track_wallet(wallet_address)
-        return jsonify(wallet_data)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/scan', methods=['POST'])
 def scan_wallets():
     try:
-        scanned = tracker.scan_trending_wallets()
+        data = request.get_json() or {}
+        num_traders = data.get('num_traders', 50)
+        
+        flagged_tokens = tracker.scan_top_traders(num_traders=num_traders)
         return jsonify({
-            'scanned_wallets': scanned,
-            'count': len(scanned)
+            'flagged_tokens': flagged_tokens,
+            'count': len(flagged_tokens)
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
