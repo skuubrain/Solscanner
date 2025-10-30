@@ -10,13 +10,12 @@
     <div class="container">
         <header>
             <h1>🔍 Solana Top Trader Scanner</h1>
-             Scanner</h1>
-            <p class="subtitle">Track tokens bought by 2+ top traders - See who's holding vs sold</p>
+            <p class="subtitle">Find tokens held by multiple top traders from trending tokens</p>
         </header>
 
         <div class="controls">
             <button onclick="scanWallets()" class="btn btn-primary">Scan Top Traders</button>
-            <button onclick="loadWallets()" class="btn btn-refresh">Refresh Data</button>
+            <button onclick="loadData()" class="btn btn-refresh">Refresh Data</button>
         </div>
 
         <div class="stats">
@@ -33,7 +32,7 @@
         <div id="message" class="message"></div>
 
         <div class="wallets-section">
-            <h2>🎯 Flagged Tokens (Bought by 2+ Top Traders)</h2>
+            <h2>🎯 Flagged Tokens (Held by 2+ Top Traders)</h2>
             <div id="tokensContainer">
                 <p class="empty-state">No flagged tokens yet. Click "Scan Top Traders" to start.</p>
             </div>
@@ -41,37 +40,33 @@
     </div>
 
     <script>
-        let walletsData = [];
         let flaggedTokensData = [];
 
-        async function loadWallets() {
+        async function loadData() {
             try {
-                const response = await fetch('/api/wallets');
-                const data = await response.json();
-                walletsData = data.wallets;
-                document.getElementById('walletCount').textContent = data.count;
-                await loadFlaggedTokens();
-                showMessage('Data refreshed successfully', 'success');
-            } catch (error) {
-                console.error('Error loading wallets:', error);
-                showMessage('Error loading wallets: ' + error.message, 'error');
-            }
-        }
-
-        async function loadFlaggedTokens() {
-            try {
-                const response = await fetch('/api/tokens/flagged');
-                const data = await response.json();
-                flaggedTokensData = data.tokens;
-                document.getElementById('tokenCount').textContent = data.count;
+                const [walletsRes, tokensRes] = await Promise.all([
+                    fetch('/api/wallets'),
+                    fetch('/api/tokens/flagged')
+                ]);
+                
+                const walletsData = await walletsRes.json();
+                const tokensData = await tokensRes.json();
+                
+                document.getElementById('walletCount').textContent = walletsData.count;
+                document.getElementById('tokenCount').textContent = tokensData.count;
+                
+                flaggedTokensData = tokensData.tokens;
                 updateTokensUI();
+                
+                showMessage('Data refreshed', 'success');
             } catch (error) {
-                console.error('Error loading flagged tokens:', error);
+                console.error('Error loading data:', error);
+                showMessage('Error loading data: ' + error.message, 'error');
             }
         }
 
         async function scanWallets() {
-            showMessage('Scanning top traders... This will take 2-3 minutes.', 'info');
+            showMessage('Scanning trending tokens and top traders... This will take 2-3 minutes.', 'info');
 
             try {
                 const response = await fetch('/api/scan', {
@@ -85,8 +80,8 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showMessage(`Scan complete! Found ${data.count} tokens bought by multiple traders`, 'success');
-                    await loadWallets();
+                    showMessage(`Scan complete! Found ${data.count} tokens held by multiple top traders`, 'success');
+                    await loadData();
                 } else {
                     showMessage('Error: ' + data.error, 'error');
                 }
@@ -104,11 +99,7 @@
                 return;
             }
 
-            container.innerHTML = flaggedTokensData.map(token => {
-                const holdingPercent = (token.still_holding / token.total_buyers * 100).toFixed(0);
-                const soldPercent = (token.sold_out / token.total_buyers * 100).toFixed(0);
-                
-                return `
+            container.innerHTML = flaggedTokensData.map(token => `
                 <div class="wallet-card token-card">
                     <div class="wallet-header">
                         <div class="wallet-address">
@@ -116,49 +107,30 @@
                             <button onclick="copyToClipboard('${token.token_address}')" class="copy-btn">📋</button>
                         </div>
                         <div class="status-badge holding">
-                            ${token.total_buyers} traders
+                            ${token.holder_count} traders
                         </div>
                     </div>
                     
                     <div class="wallet-info">
                         <div><strong>Token:</strong> ${truncateAddress(token.token_address)}</div>
-                        <div><strong>Total Buyers:</strong> ${token.total_buyers} top traders</div>
-                        <div style="color: ${token.avg_pnl >= 0 ? '#10b981' : '#ef4444'}">
-                            <strong>Avg PnL:</strong> $${formatNumber(token.avg_pnl)}
-                        </div>
-                    </div>
-
-                    <div style="margin: 15px 0; padding: 10px; background: #1a1a1a; border-radius: 8px;">
-                        <div style="display: flex; justify-content: space-around; text-align: center;">
-                            <div>
-                                <div style="font-size: 1.5em; color: #10b981;">✅ ${token.still_holding}</div>
-                                <div style="font-size: 0.9em; color: #888;">Still Holding (${holdingPercent}%)</div>
-                            </div>
-                            <div>
-                                <div style="font-size: 1.5em; color: #ef4444;">❌ ${token.sold_out}</div>
-                                <div style="font-size: 0.9em; color: #888;">Sold Out (${soldPercent}%)</div>
-                            </div>
-                        </div>
+                        <div><strong>Held by:</strong> ${token.holder_count} top traders</div>
+                        <div><strong>Avg Balance:</strong> ${formatNumber(token.avg_balance)}</div>
                     </div>
                     
                     <div class="tokens-list">
-                        <strong>Trader Details:</strong>
-                        ${token.buyers.slice(0, 10).map(buyer => `
+                        <strong>Top Traders Holding This:</strong>
+                        ${token.holders.slice(0, 10).map(holder => `
                             <div class="token-item">
-                                <span class="token-mint" title="${buyer.wallet}">${truncateAddress(buyer.wallet)}</span>
-                                <span style="color: ${buyer.status === 'holding' ? '#10b981' : '#ef4444'}">
-                                    ${buyer.status === 'holding' ? '✅ Holding' : '❌ Sold'}
-                                </span>
-                                <span style="color: ${buyer.pnl >= 0 ? '#10b981' : '#ef4444'}">
-                                    ${buyer.pnl >= 0 ? '+' : ''}$${formatNumber(buyer.pnl)} (${buyer.pnl_percent >= 0 ? '+' : ''}${buyer.pnl_percent.toFixed(1)}%)
-                                </span>
-                                <button onclick="copyToClipboard('${buyer.wallet}')" class="copy-btn-small">📋</button>
+                                <span class="token-mint" title="${holder.wallet}">${truncateAddress(holder.wallet)}</span>
+                                <span style="color: #888; font-size: 0.9em;">from ${holder.source_token}</span>
+                                <span>${formatNumber(holder.balance)} tokens</span>
+                                <button onclick="copyToClipboard('${holder.wallet}')" class="copy-btn-small">📋</button>
                             </div>
                         `).join('')}
-                        ${token.buyers.length > 10 ? `<div style="text-align: center; color: #888; margin-top: 10px;">... and ${token.buyers.length - 10} more traders</div>` : ''}
+                        ${token.holders.length > 10 ? `<div style="text-align: center; color: #888; margin-top: 10px;">... and ${token.holders.length - 10} more</div>` : ''}
                     </div>
                 </div>
-            `}).join('');
+            `).join('');
         }
 
         function truncateAddress(address) {
@@ -169,7 +141,7 @@
         function formatNumber(num) {
             return Number(num).toLocaleString(undefined, {
                 minimumFractionDigits: 2,
-                maximumFractionDigits: 2
+                maximumFractionDigits: 6
             });
         }
 
@@ -192,8 +164,8 @@
             });
         }
 
-        loadWallets();
-        setInterval(loadWallets, 60000);
+        loadData();
+        setInterval(loadData, 60000);
     </script>
 </body>
 </html>
