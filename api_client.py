@@ -8,14 +8,11 @@ load_dotenv()
 class SolanaAPIClient:
     def __init__(self):
         self.solana_tracker_api_key = os.getenv('SOLANA_TRACKER_API_KEY', '')
-        self.helius_api_key = os.getenv('HELIUS_API_KEY', '')
-        
         self.solana_tracker_url = "https://data.solanatracker.io"
-        self.helius_url = "https://api.helius.xyz/v0"
         
-        print(f"API Keys - Solana Tracker: {'✓' if self.solana_tracker_api_key else '✗'}, Helius: {'✓' if self.helius_api_key else '✗'}", flush=True)
+        print(f"API Key - Solana Tracker: {'✓' if self.solana_tracker_api_key else '✗'}", flush=True)
 
-    def get_trending_tokens(self, limit: int = 20) -> List[Dict]:
+    def get_trending_tokens(self, limit: int = 10) -> List[Dict]:
         """Get trending tokens sorted by volume"""
         try:
             url = f"{self.solana_tracker_url}/search"
@@ -24,7 +21,7 @@ class SolanaAPIClient:
                 'sortBy': 'volume_24h',
                 'sortOrder': 'desc',
                 'limit': limit,
-                'minVolume_24h': 1000  # At least $1k volume
+                'minVolume_24h': 5000
             }
             
             print(f"Fetching trending tokens...", flush=True)
@@ -70,20 +67,17 @@ class SolanaAPIClient:
             print(f"Error fetching top traders: {e}", flush=True)
             return []
 
-    def get_wallet_tokens(self, wallet_address: str) -> Optional[List[Dict]]:
-        """Get wallet token holdings using Helius"""
-        if not self.helius_api_key:
-            return None
-            
+    def get_wallet_pnl(self, wallet_address: str) -> Optional[Dict]:
+        """Get wallet PnL data which includes all token positions"""
         try:
-            url = f"{self.helius_url}/addresses/{wallet_address}/balances"
-            params = {'api-key': self.helius_api_key}
-            response = requests.get(url, params=params, timeout=15)
+            url = f"{self.solana_tracker_url}/wallet/{wallet_address}/pnl"
+            headers = {'x-api-key': self.solana_tracker_api_key} if self.solana_tracker_api_key else {}
+            
+            response = requests.get(url, headers=headers, timeout=20)
 
             if response.status_code == 200:
                 data = response.json()
-                tokens = data.get('tokens', [])
-                return tokens
+                return data
             return None
         except Exception as e:
             return None
