@@ -9,23 +9,19 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔍 Solana Wallet Tracker</h1>
-            <p class="subtitle">Track top traders buying 2+ SPL tokens</p>
+            <h1>🔍 Solana Top Trader Scanner</h1>
+            <p class="subtitle">Find tokens held by 2+ top traders</p>
         </header>
 
         <div class="controls">
-            <div class="control-group">
-                <input type="text" id="walletInput" placeholder="Enter wallet address to track">
-                <button onclick="trackWallet()" class="btn btn-primary">Track Wallet</button>
-            </div>
-            <button onclick="scanWallets()" class="btn btn-secondary">Scan Trending Wallets</button>
+            <button onclick="scanWallets()" class="btn btn-primary">Scan Top Traders</button>
             <button onclick="loadWallets()" class="btn btn-refresh">Refresh Data</button>
         </div>
 
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-number" id="walletCount">0</div>
-                <div class="stat-label">Tracked Wallets</div>
+                <div class="stat-label">Top Traders Scanned</div>
             </div>
             <div class="stat-card">
                 <div class="stat-number" id="tokenCount">0</div>
@@ -36,22 +32,30 @@
         <div id="message" class="message"></div>
 
         <div class="wallets-section">
-            <h2>Tracked Wallets</h2>
+            <h2>Flagged Tokens (Held by 2+ Top Traders)</h2>
+            <div id="tokensContainer">
+                <p class="empty-state">No flagged tokens yet. Click "Scan Top Traders" to start.</p>
+            </div>
+        </div>
+
+        <div class="wallets-section">
+            <h2>Top Traders Wallets</h2>
             <div id="walletsContainer">
-                <p class="empty-state">No wallets tracked yet. Add a wallet or scan trending wallets to get started.</p>
+                <p class="empty-state">No wallets scanned yet.</p>
             </div>
         </div>
     </div>
 
     <script>
         let walletsData = [];
+        let flaggedTokensData = [];
 
         async function loadWallets() {
             try {
                 const response = await fetch('/api/wallets');
                 const data = await response.json();
                 walletsData = data.wallets;
-                updateUI();
+                updateWalletsUI();
                 await loadFlaggedTokens();
                 showMessage('Data refreshed successfully', 'success');
             } catch (error) {
@@ -64,62 +68,30 @@
             try {
                 const response = await fetch('/api/tokens/flagged');
                 const data = await response.json();
+                flaggedTokensData = data.tokens;
                 document.getElementById('tokenCount').textContent = data.count;
+                updateTokensUI();
             } catch (error) {
                 console.error('Error loading flagged tokens:', error);
             }
         }
 
-        async function trackWallet() {
-            const walletAddress = document.getElementById('walletInput').value.trim();
-            
-            if (!walletAddress) {
-                showMessage('Please enter a wallet address', 'error');
-                return;
-            }
-
-            showMessage('Tracking wallet...', 'info');
-
-            try {
-                const response = await fetch('/api/track', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ wallet_address: walletAddress }),
-                });
-
-                const data = await response.json();
-                
-                if (response.ok) {
-                    if (data.meets_criteria) {
-                        showMessage(`Wallet tracked! Found ${data.token_count} tokens`, 'success');
-                        await loadWallets();
-                    } else {
-                        showMessage(`Wallet has only ${data.token_count} token(s). Needs 2+ to track.`, 'warning');
-                    }
-                    document.getElementById('walletInput').value = '';
-                } else {
-                    showMessage('Error: ' + data.error, 'error');
-                }
-            } catch (error) {
-                console.error('Error tracking wallet:', error);
-                showMessage('Error tracking wallet: ' + error.message, 'error');
-            }
-        }
-
         async function scanWallets() {
-            showMessage('Scanning trending wallets... This may take a moment.', 'info');
+            showMessage('Scanning top traders... This may take a few minutes.', 'info');
 
             try {
                 const response = await fetch('/api/scan', {
                     method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({}),
                 });
 
                 const data = await response.json();
-                
+
                 if (response.ok) {
-                    showMessage(`Scan complete! Found ${data.count} qualifying wallets`, 'success');
+                    showMessage(`Scan complete! Found ${data.count} flagged tokens from top traders`, 'success');
                     await loadWallets();
                 } else {
                     showMessage('Error: ' + data.error, 'error');
@@ -130,12 +102,49 @@
             }
         }
 
-        function updateUI() {
+        function updateTokensUI() {
+            const container = document.getElementById('tokensContainer');
+
+            if (flaggedTokensData.length === 0) {
+                container.innerHTML = '<p class="empty-state">No flagged tokens yet. Click "Scan Top Traders" to start.</p>';
+                return;
+            }
+
+            container.innerHTML = flaggedTokensData.map(token => `
+                <div class="wallet-card token-card">
+                    <div class="wallet-header">
+                        <div class="wallet-address">
+                            <strong>${token.symbol}</strong> - ${token.name}
+                            <button onclick="copyToClipboard('${token.mint}')" class="copy-btn">📋</button>
+                        </div>
+                        <div class="status-badge holding">
+                            ${token.holder_count} traders
+                        </div>
+                    </div>
+                    <div class="wallet-info">
+                        <div><strong>Token Address:</strong> ${truncateAddress(token.mint)}</div>
+                        <div><strong>Held by:</strong> ${token.holder_count} top traders</div>
+                    </div>
+                    <div class="tokens-list">
+                        <strong>Top Trader Wallets Holding This Token:</strong>
+                        ${token.holders.slice(0, 5).map(holder => `
+                            <div class="token-item">
+                                <span class="token-mint" title="${holder}">${truncateAddress(holder)}</span>
+                                <button onclick="copyToClipboard('${holder}')" class="copy-btn-small">📋</button>
+                            </div>
+                        `).join('')}
+                        ${token.holders.length > 5 ? `<div class="token-item">... and ${token.holders.length - 5} more</div>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateWalletsUI() {
             const container = document.getElementById('walletsContainer');
             document.getElementById('walletCount').textContent = walletsData.length;
 
             if (walletsData.length === 0) {
-                container.innerHTML = '<p class="empty-state">No wallets tracked yet. Add a wallet or scan trending wallets to get started.</p>';
+                container.innerHTML = '<p class="empty-state">No wallets scanned yet.</p>';
                 return;
             }
 
@@ -146,8 +155,8 @@
                             <strong>Wallet:</strong> ${truncateAddress(wallet.wallet)}
                             <button onclick="copyToClipboard('${wallet.wallet}')" class="copy-btn">📋</button>
                         </div>
-                        <div class="status-badge ${wallet.position_status || 'holding'}">
-                            ${formatStatus(wallet.position_status || 'holding')}
+                        <div class="status-badge holding">
+                            ${wallet.token_count} tokens
                         </div>
                     </div>
                     <div class="wallet-info">
@@ -174,15 +183,6 @@
             return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
         }
 
-        function formatStatus(status) {
-            const statusMap = {
-                'holding': '✅ Holding',
-                'sold_partially': '⚠️ Sold Partially',
-                'sold_all': '❌ Sold All'
-            };
-            return statusMap[status] || status;
-        }
-
         function formatDate(dateString) {
             if (!dateString) return 'N/A';
             const date = new Date(dateString);
@@ -202,7 +202,7 @@
             messageEl.textContent = text;
             messageEl.className = `message ${type}`;
             messageEl.style.display = 'block';
-            
+
             setTimeout(() => {
                 messageEl.style.display = 'none';
             }, 5000);
@@ -216,14 +216,8 @@
             });
         }
 
-        document.getElementById('walletInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                trackWallet();
-            }
-        });
-
         loadWallets();
-        setInterval(loadWallets, 30000);
+        setInterval(loadWallets, 60000);
     </script>
 </body>
 </html>
