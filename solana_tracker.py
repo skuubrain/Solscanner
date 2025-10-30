@@ -1,187 +1,149 @@
 from typing import Dict, List, Set
 from datetime import datetime
+from collections import defaultdict
 from api_client import SolanaAPIClient
 
 class WalletTracker:
     def __init__(self):
         self.api_client = SolanaAPIClient()
         self.tracked_wallets: Dict[str, Dict] = {}
-        self.flagged_tokens: Set[str] = set()
+        self.token_holders: Dict[str, Set[str]] = defaultdict(set)  # token -> set of wallet addresses
+        self.flagged_tokens: List[Dict] = []  # tokens held by 2+ top traders
 
     def analyze_wallet(self, wallet_address: str) -> Dict:
-        """Analyze a wallet and return its token holdings"""
-        print(f"\n--- Analyzing wallet: {wallet_address[:8]}... ---")
-        
+        """Analyze a single wallet and get its SPL token holdings"""
         tokens = self.api_client.get_wallet_tokens(wallet_address)
 
         if not tokens:
-            print(f"No tokens found for wallet {wallet_address[:8]}...")
             return {
                 'wallet': wallet_address,
                 'token_count': 0,
                 'tokens': [],
-                'status': 'inactive',
-                'meets_criteria': False,
-                'recent_transactions': 0
+                'status': 'inactive'
             }
 
         # Filter for SPL tokens with actual balance
-        spl_tokens = [t for t in tokens if t.get('mint') or t.get('address')]
-        spl_tokens = [t for t in spl_tokens if float(t.get('amount', 0) or t.get('balance', 0)) > 0]
-
-        print(f"Found {len(spl_tokens)} SPL tokens with balance")
+        spl_tokens = []
+        for t in tokens:
+            mint = t.get('mint')
+            amount = float(t.get('amount', 0))
+            if mint and amount > 0:
+                spl_tokens.append(t)
 
         wallet_data = {
             'wallet': wallet_address,
             'token_count': len(spl_tokens),
             'tokens': [],
             'status': 'active' if len(spl_tokens) > 0 else 'inactive',
-            'meets_criteria': len(spl_tokens) >= 2,
-            'last_updated': datetime.now().isoformat(),
-            'recent_transactions': 0,
-            'has_recent_activity': True
+            'last_updated': datetime.now().isoformat()
         }
 
         for token in spl_tokens:
-            mint = token.get('mint') or token.get('address') or token.get('tokenAddress')
-            amount = float(token.get('amount', 0) or token.get('balance', 0) or token.get('uiAmount', 0))
-            decimals = int(token.get('decimals', 0) or 0)
+            mint = token.get('mint')
+            amount = float(token.get('amount', 0))
+            decimals = int(token.get('decimals', 0))
             
-            # Calculate actual amount
-            if decimals > 0 and amount > 1:
-                actual_amount = amount / (10 ** decimals)
-            else:
-                actual_amount = amount
+            actual_amount = amount / (10 ** decimals) if decimals > 0 else amount
 
             token_info = {
                 'mint': mint,
                 'amount': actual_amount,
-                'raw_amount': amount,
                 'symbol': token.get('symbol', 'UNKNOWN'),
                 'name': token.get('name', 'Unknown Token')
             }
             wallet_data['tokens'].append(token_info)
-
-            # Flag tokens from qualifying wallets
-            if wallet_data['meets_criteria'] and mint:
-                self.flagged_tokens.add(mint)
-
-        print(f"Wallet meets criteria: {wallet_data['meets_criteria']} ({len(spl_tokens)} tokens)")
-        return wallet_data
-
-    def track_wallet(self, wallet_address: str) -> Dict:
-        """Track a specific wallet"""
-        wallet_data = self.analyze_wallet(wallet_address)
-
-        if wallet_data['meets_criteria']:
-            if wallet_address in self.tracked_wallets:
-                previous_data = self.tracked_wallets[wallet_address]
-                wallet_data['position_status'] = self._determine_position_status(
-                    previous_data, wallet_data
-                )
-            else:
-                wallet_data['position_status'] = 'holding'
-
-            self.tracked_wallets[wallet_address] = wallet_data
-            print(f"✓ Wallet tracked: {wallet_address[:8]}... with {wallet_data['token_count']} tokens")
+            
+            # Track which wallets hold which tokens
+            self.token_holders[mint].add(wallet_address)
 
         return wallet_data
 
-    def _determine_position_status(self, previous: Dict, current: Dict) -> str:
-        """Determine if wallet is holding, selling, or sold"""
-        prev_tokens = {t['mint']: t['amount'] for t in previous.get('tokens', [])}
-        curr_tokens = {t['mint']: t['amount'] for t in current.get('tokens', [])}
-
-        if not curr_tokens:
-            return 'sold_all'
-
-        sold_count = 0
-        partial_count = 0
-
-        for mint, prev_amount in prev_tokens.items():
-            curr_amount = curr_tokens.get(mint, 0)
-
-            if curr_amount == 0:
-                sold_count += 1
-            elif curr_amount < prev_amount:
-                partial_count += 1
-
-        if sold_count == len(prev_tokens):
-            return 'sold_all'
-        elif sold_count > 0 or partial_count > 0:
-            return 'sold_partially'
-        else:
-            return 'holding'
-
-    def scan_trending_wallets(self) -> List[Dict]:
-        """Scan trending tokens and track their holders"""
-        print("\n========== STARTING WALLET SCAN ==========")
+    def scan_top_traders(self, num_traders: int = 50) -> List[Dict]:
+        """
+        Main function: Scan top traders and find tokens held by 2+ traders
+        """
+        print("\n========== SCANNING TOP TRADERS ==========")
         
-        trending_tokens = self.api_client.get_trending_tokens()
-        print(f"\nGot {len(trending_tokens)} trending tokens to scan")
+        # Reset tracking
+        self.token_holders.clear()
+        self.tracked_wallets.clear()
+        self.flagged_tokens.clear()
         
-        if not trending_tokens:
-            print("⚠ No trending tokens found - check your SOLANA_TRACKER_API_KEY")
+        # Get top traders
+        top_traders = self.api_client.get_top_traders(limit=num_traders)
+        
+        if not top_traders:
+            print("⚠ No top traders found - check your SOLANA_TRACKER_API_KEY")
             return []
-
-        scanned_wallets = []
-        scanned_addresses = set()
-
-        # Scan top 5 trending tokens
-        for idx, token in enumerate(trending_tokens[:5], 1):
-            # Extract token address from different possible fields
-            token_address = (
-                token.get('address') or 
-                token.get('mint') or 
-                token.get('poolAddress') or 
-                token.get('tokenAddress')
-            )
+        
+        print(f"\nAnalyzing {len(top_traders)} top traders...")
+        
+        # Analyze each top trader's wallet
+        successful_scans = 0
+        for idx, trader in enumerate(top_traders, 1):
+            wallet_address = trader.get('wallet') or trader.get('address')
             
-            if not token_address:
-                print(f"\n[{idx}/5] Skipping token - no address found")
+            if not wallet_address:
                 continue
-
-            token_symbol = token.get('symbol', 'UNKNOWN')
-            print(f"\n[{idx}/5] Scanning token: {token_symbol} ({token_address[:8]}...)")
             
-            holders = self.api_client.get_token_holders(token_address)
+            pnl = trader.get('totalPnl', 0) or trader.get('pnl', 0)
+            print(f"\n[{idx}/{len(top_traders)}] Analyzing wallet: {wallet_address[:8]}... (PnL: ${pnl:,.2f})")
             
-            if not holders:
-                print(f"  No holders found for {token_symbol}")
-                continue
+            try:
+                wallet_data = self.analyze_wallet(wallet_address)
                 
-            print(f"  Analyzing top {min(len(holders), 10)} holders...")
-
-            # Check top 10 holders
-            for holder in holders[:10]:
-                wallet_address = (
-                    holder.get('owner') or 
-                    holder.get('address') or 
-                    holder.get('wallet')
-                )
+                if wallet_data['status'] == 'active':
+                    self.tracked_wallets[wallet_address] = wallet_data
+                    successful_scans += 1
+                    print(f"  ✓ Found {wallet_data['token_count']} SPL tokens")
+                else:
+                    print(f"  - No active tokens")
+                    
+            except Exception as e:
+                print(f"  ✗ Error: {e}")
+        
+        print(f"\nSuccessfully scanned {successful_scans}/{len(top_traders)} wallets")
+        
+        # Find tokens held by 2+ traders
+        print("\n========== FINDING TOKENS WITH 2+ TRADERS ==========")
+        
+        for token_mint, holders in self.token_holders.items():
+            if len(holders) >= 2:
+                # Get token info from one of the holders
+                token_info = None
+                for holder_address in holders:
+                    wallet_data = self.tracked_wallets.get(holder_address)
+                    if wallet_data:
+                        for token in wallet_data['tokens']:
+                            if token['mint'] == token_mint:
+                                token_info = token
+                                break
+                    if token_info:
+                        break
                 
-                if not wallet_address or wallet_address in scanned_addresses:
-                    continue
+                flagged = {
+                    'mint': token_mint,
+                    'symbol': token_info.get('symbol', 'UNKNOWN') if token_info else 'UNKNOWN',
+                    'name': token_info.get('name', 'Unknown') if token_info else 'Unknown',
+                    'holder_count': len(holders),
+                    'holders': list(holders)
+                }
                 
-                scanned_addresses.add(wallet_address)
-                
-                try:
-                    wallet_data = self.track_wallet(wallet_address)
-                    if wallet_data['meets_criteria']:
-                        scanned_wallets.append(wallet_data)
-                        print(f"    ✓ Added wallet: {wallet_address[:8]}... ({wallet_data['token_count']} tokens)")
-                except Exception as e:
-                    print(f"    ✗ Error analyzing wallet {wallet_address[:8]}...: {e}")
-
+                self.flagged_tokens.append(flagged)
+                print(f"✓ {flagged['symbol']} ({token_mint[:8]}...) - held by {len(holders)} top traders")
+        
+        # Sort by number of holders (descending)
+        self.flagged_tokens.sort(key=lambda x: x['holder_count'], reverse=True)
+        
         print(f"\n========== SCAN COMPLETE ==========")
-        print(f"Total qualifying wallets found: {len(scanned_wallets)}")
-        print(f"Total wallets now tracked: {len(self.tracked_wallets)}")
-        return scanned_wallets
+        print(f"Found {len(self.flagged_tokens)} tokens held by 2+ top traders")
+        
+        return self.flagged_tokens
 
     def get_tracked_wallets(self) -> List[Dict]:
-        """Get all tracked wallets"""
+        """Get all tracked top trader wallets"""
         return list(self.tracked_wallets.values())
 
-    def get_flagged_tokens(self) -> List[str]:
-        """Get all flagged token addresses"""
-        return list(self.flagged_tokens)
+    def get_flagged_tokens(self) -> List[Dict]:
+        """Get tokens held by 2+ top traders"""
+        return self.flagged_tokens
