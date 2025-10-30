@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Solana Wallet Tracker</title>
+    <title>Solana Top Trader Scanner</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
             <h1>🔍 Solana Top Trader Scanner</h1>
-            <p class="subtitle">Find tokens held by 2+ top traders</p>
+             Scanner</h1>
+            <p class="subtitle">Track tokens bought by 2+ top traders - See who's holding vs sold</p>
         </header>
 
         <div class="controls">
@@ -21,7 +22,7 @@
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-number" id="walletCount">0</div>
-                <div class="stat-label">Top Traders Scanned</div>
+                <div class="stat-label">Traders Analyzed</div>
             </div>
             <div class="stat-card">
                 <div class="stat-number" id="tokenCount">0</div>
@@ -32,16 +33,9 @@
         <div id="message" class="message"></div>
 
         <div class="wallets-section">
-            <h2>Flagged Tokens (Held by 2+ Top Traders)</h2>
+            <h2>🎯 Flagged Tokens (Bought by 2+ Top Traders)</h2>
             <div id="tokensContainer">
                 <p class="empty-state">No flagged tokens yet. Click "Scan Top Traders" to start.</p>
-            </div>
-        </div>
-
-        <div class="wallets-section">
-            <h2>Top Traders Wallets</h2>
-            <div id="walletsContainer">
-                <p class="empty-state">No wallets scanned yet.</p>
             </div>
         </div>
     </div>
@@ -55,7 +49,7 @@
                 const response = await fetch('/api/wallets');
                 const data = await response.json();
                 walletsData = data.wallets;
-                updateWalletsUI();
+                document.getElementById('walletCount').textContent = data.count;
                 await loadFlaggedTokens();
                 showMessage('Data refreshed successfully', 'success');
             } catch (error) {
@@ -77,7 +71,7 @@
         }
 
         async function scanWallets() {
-            showMessage('Scanning top traders... This may take a few minutes.', 'info');
+            showMessage('Scanning top traders... This will take 2-3 minutes.', 'info');
 
             try {
                 const response = await fetch('/api/scan', {
@@ -91,14 +85,14 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    showMessage(`Scan complete! Found ${data.count} flagged tokens from top traders`, 'success');
+                    showMessage(`Scan complete! Found ${data.count} tokens bought by multiple traders`, 'success');
                     await loadWallets();
                 } else {
                     showMessage('Error: ' + data.error, 'error');
                 }
             } catch (error) {
-                console.error('Error scanning wallets:', error);
-                showMessage('Error scanning wallets: ' + error.message, 'error');
+                console.error('Error scanning:', error);
+                showMessage('Error scanning: ' + error.message, 'error');
             }
         }
 
@@ -110,72 +104,61 @@
                 return;
             }
 
-            container.innerHTML = flaggedTokensData.map(token => `
+            container.innerHTML = flaggedTokensData.map(token => {
+                const holdingPercent = (token.still_holding / token.total_buyers * 100).toFixed(0);
+                const soldPercent = (token.sold_out / token.total_buyers * 100).toFixed(0);
+                
+                return `
                 <div class="wallet-card token-card">
                     <div class="wallet-header">
                         <div class="wallet-address">
-                            <strong>${token.symbol}</strong> - ${token.name}
-                            <button onclick="copyToClipboard('${token.mint}')" class="copy-btn">📋</button>
+                            <strong style="font-size: 1.2em;">${token.symbol}</strong> - ${token.name}
+                            <button onclick="copyToClipboard('${token.token_address}')" class="copy-btn">📋</button>
                         </div>
                         <div class="status-badge holding">
-                            ${token.holder_count} traders
+                            ${token.total_buyers} traders
                         </div>
                     </div>
+                    
                     <div class="wallet-info">
-                        <div><strong>Token Address:</strong> ${truncateAddress(token.mint)}</div>
-                        <div><strong>Held by:</strong> ${token.holder_count} top traders</div>
+                        <div><strong>Token:</strong> ${truncateAddress(token.token_address)}</div>
+                        <div><strong>Total Buyers:</strong> ${token.total_buyers} top traders</div>
+                        <div style="color: ${token.avg_pnl >= 0 ? '#10b981' : '#ef4444'}">
+                            <strong>Avg PnL:</strong> $${formatNumber(token.avg_pnl)}
+                        </div>
                     </div>
+
+                    <div style="margin: 15px 0; padding: 10px; background: #1a1a1a; border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-around; text-align: center;">
+                            <div>
+                                <div style="font-size: 1.5em; color: #10b981;">✅ ${token.still_holding}</div>
+                                <div style="font-size: 0.9em; color: #888;">Still Holding (${holdingPercent}%)</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 1.5em; color: #ef4444;">❌ ${token.sold_out}</div>
+                                <div style="font-size: 0.9em; color: #888;">Sold Out (${soldPercent}%)</div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="tokens-list">
-                        <strong>Top Trader Wallets Holding This Token:</strong>
-                        ${token.holders.slice(0, 5).map(holder => `
+                        <strong>Trader Details:</strong>
+                        ${token.buyers.slice(0, 10).map(buyer => `
                             <div class="token-item">
-                                <span class="token-mint" title="${holder}">${truncateAddress(holder)}</span>
-                                <button onclick="copyToClipboard('${holder}')" class="copy-btn-small">📋</button>
+                                <span class="token-mint" title="${buyer.wallet}">${truncateAddress(buyer.wallet)}</span>
+                                <span style="color: ${buyer.status === 'holding' ? '#10b981' : '#ef4444'}">
+                                    ${buyer.status === 'holding' ? '✅ Holding' : '❌ Sold'}
+                                </span>
+                                <span style="color: ${buyer.pnl >= 0 ? '#10b981' : '#ef4444'}">
+                                    ${buyer.pnl >= 0 ? '+' : ''}$${formatNumber(buyer.pnl)} (${buyer.pnl_percent >= 0 ? '+' : ''}${buyer.pnl_percent.toFixed(1)}%)
+                                </span>
+                                <button onclick="copyToClipboard('${buyer.wallet}')" class="copy-btn-small">📋</button>
                             </div>
                         `).join('')}
-                        ${token.holders.length > 5 ? `<div class="token-item">... and ${token.holders.length - 5} more</div>` : ''}
+                        ${token.buyers.length > 10 ? `<div style="text-align: center; color: #888; margin-top: 10px;">... and ${token.buyers.length - 10} more traders</div>` : ''}
                     </div>
                 </div>
-            `).join('');
-        }
-
-        function updateWalletsUI() {
-            const container = document.getElementById('walletsContainer');
-            document.getElementById('walletCount').textContent = walletsData.length;
-
-            if (walletsData.length === 0) {
-                container.innerHTML = '<p class="empty-state">No wallets scanned yet.</p>';
-                return;
-            }
-
-            container.innerHTML = walletsData.map(wallet => `
-                <div class="wallet-card">
-                    <div class="wallet-header">
-                        <div class="wallet-address">
-                            <strong>Wallet:</strong> ${truncateAddress(wallet.wallet)}
-                            <button onclick="copyToClipboard('${wallet.wallet}')" class="copy-btn">📋</button>
-                        </div>
-                        <div class="status-badge holding">
-                            ${wallet.token_count} tokens
-                        </div>
-                    </div>
-                    <div class="wallet-info">
-                        <div><strong>Token Count:</strong> ${wallet.token_count}</div>
-                        <div><strong>Status:</strong> ${wallet.status}</div>
-                        <div><strong>Last Updated:</strong> ${formatDate(wallet.last_updated)}</div>
-                    </div>
-                    <div class="tokens-list">
-                        <strong>Tokens:</strong>
-                        ${wallet.tokens.map(token => `
-                            <div class="token-item">
-                                <span class="token-symbol">${token.symbol}</span>
-                                <span class="token-amount">${formatAmount(token.amount)}</span>
-                                <span class="token-mint" title="${token.mint}">${truncateAddress(token.mint)}</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `).join('');
+            `}).join('');
         }
 
         function truncateAddress(address) {
@@ -183,17 +166,10 @@
             return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
         }
 
-        function formatDate(dateString) {
-            if (!dateString) return 'N/A';
-            const date = new Date(dateString);
-            return date.toLocaleString();
-        }
-
-        function formatAmount(amount) {
-            if (amount === undefined || amount === null) return '0';
-            return parseFloat(amount).toLocaleString(undefined, {
+        function formatNumber(num) {
+            return Number(num).toLocaleString(undefined, {
                 minimumFractionDigits: 2,
-                maximumFractionDigits: 6
+                maximumFractionDigits: 2
             });
         }
 
@@ -210,7 +186,7 @@
 
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
-                showMessage('Address copied to clipboard!', 'success');
+                showMessage('Address copied!', 'success');
             }).catch(err => {
                 console.error('Failed to copy:', err);
             });
