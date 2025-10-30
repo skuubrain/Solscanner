@@ -178,4 +178,25 @@ class WalletTracker:
                 }
                 
                 self.flagged_tokens.append(flagged)
-                print(f"  ✓ {token_symbol:
+                print(f"  ✓ {token_symbol:15} - held by {len(holders)} top traders", flush=True)
+        
+        # Sort by holder count
+        self.flagged_tokens.sort(key=lambda x: x['holder_count'], reverse=True)
+        
+        print("-" * 70, flush=True)
+        print(f"\n{'='*70}", flush=True)
+        print(f"SCAN COMPLETE", flush=True)
+        print(f"{'='*70}", flush=True)
+        print(f"📊 Analyzed {successful_scans} top trader wallets", flush=True)
+        print(f"🎯 Found {len(self.flagged_tokens)} tokens held by {min_buyers}+ traders", flush=True)
+        print(f"{'='*70}\n", flush=True)
+        
+        return self.flagged_tokens
+
+    def get_tracked_wallets(self) -> List[Dict]:
+        """Get all tracked wallets"""
+        return list(self.tracked_wallets.values())
+
+    def get_flagged_tokens(self) -> List[Dict]:
+        """Get tokens held by multiple traders"""
+        return self.flagged_tokens
